@@ -52,7 +52,7 @@ class StaticCodeAnalyzer:
                     'test_file': str(repo_path / test_file),
                     'feature_content': feature_content,
                     'matched_content': matched_content,
-                    'bla_project_files': []
+                    'system_code_files': []
                 }
                 results.append(result)
                 continue
@@ -70,7 +70,7 @@ class StaticCodeAnalyzer:
                     'test_file': str(test_file_path),
                     'feature_content': feature_content,
                     'matched_content': matched_content,
-                    'bla_project_files': []
+                    'system_code_files': []
                 }
                 results.append(result)
                 continue
@@ -86,10 +86,10 @@ class StaticCodeAnalyzer:
                 'language': language,
                 'normalized_repo_path': str(repo_path),
                 'feature_file': feature_file,
-                'glue_code_test_file': str(test_file),
+                'step_definitions_file': str(test_file),
                 'feature_content': feature_content,
-                'glue_code_content': matched_content,
-                'bla_project_files': used_files_records
+                'step_definitions_content': matched_content,
+                'system_code_files': used_files_records
             }
             
             results.append(result)
@@ -238,17 +238,52 @@ class StaticCodeAnalyzer:
         try:
             with open(test_file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-            require_pattern = r'require\s*\(\s*["\'](\.[^"\']+)["\']\s*\)'
-            import_pattern = r'import\s+.*from\s+["\'](\.[^"\']+)["\']'
+            require_pattern = r'require\s*\(\s*["\']([^"\']+)["\']\s*\)'
+            import_pattern = r'import\s+.*from\s+["\']([^"\']+)["\']'
             requires = re.findall(require_pattern, content)
             imports = re.findall(import_pattern, content)
             for req in requires + imports:
-                js_path = (repo_path / f"{req}").with_suffix('.js')
-                ts_path = (repo_path / f"{req}").with_suffix('.ts')
-                if js_path.exists() and self._is_project_file(js_path, repo_path):
-                    used_files.add(str(js_path))
-                if ts_path.exists() and self._is_project_file(ts_path, repo_path):
-                    used_files.add(str(ts_path))
+                # Se o caminho for relativo (começa com .), resolve a partir do diretório do arquivo de teste
+                if req.startswith('.'):
+                    # Remove a extensão do arquivo de teste para obter o diretório
+                    base_dir = test_file_path.parent
+                    # Tenta resolver o caminho
+                    potential_path = base_dir / req
+                # Se o caminho for absoluto ou de módulo (não começa com .), a lógica de busca é mais complexa.
+                # Para simplificar, vamos assumir que se não for relativo, é um módulo e ignorar por enquanto,
+                # ou tentar encontrar o arquivo diretamente no repo_path se for um caminho absoluto.
+                # Como o exemplo do usuário é relativo, vamos focar nisso.
+                else:
+                    # Para imports não relativos, vamos tentar buscar no repo_path, assumindo que
+                    # são caminhos absolutos dentro do projeto (ex: @/components/X) ou módulos (que serão ignorados).
+                    # A heurística de busca é complexa, mas para caminhos absolutos do projeto,
+                    # podemos tentar resolver a partir da raiz do repositório.
+                    potential_path = repo_path / req
+                    # Para imports de módulos (ex: 'react'), a heurística atual não vai funcionar bem,
+                    # mas o objetivo é encontrar arquivos do projeto. Vamos focar em arquivos com extensão.
+                    
+                # Lista de extensões comuns em Node.js/TS
+                extensions = ['.js', '.jsx', '.ts', '.tsx', '.json']
+
+                # 1. Tenta o caminho exato
+                if potential_path.exists() and self._is_project_file(potential_path, repo_path):
+                    used_files.add(str(potential_path))
+                    continue
+
+                # 2. Tenta adicionar extensões
+                for ext in extensions:
+                    path_with_ext = potential_path.with_suffix(ext)
+                    if path_with_ext.exists() and self._is_project_file(path_with_ext, repo_path):
+                        used_files.add(str(path_with_ext))
+                        break # Encontrou, passa para o próximo require/import
+
+                # 3. Tenta como diretório (index.js/index.ts)
+                path_as_dir = potential_path / 'index'
+                for ext in extensions:
+                    path_with_index_ext = path_as_dir.with_suffix(ext)
+                    if path_with_index_ext.exists() and self._is_project_file(path_with_index_ext, repo_path):
+                        used_files.add(str(path_with_index_ext))
+                        break # Encontrou, passa para o próximo require/import
         except Exception as e:
             print(f"Erro ao analisar arquivo Node.js {test_file_path}: {e}")
         return sorted(list(used_files))
@@ -350,4 +385,3 @@ class StaticCodeAnalyzer:
             return False
         except Exception:
             return False
-

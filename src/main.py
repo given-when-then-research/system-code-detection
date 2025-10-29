@@ -27,12 +27,12 @@ def main():
     
     print(f"Análise concluída! Resultados salvos em: {output_path}")
     
-    # Estatísticas (mantidas)
+    # Estatísticas
     analysis_results = results
     total_entries = len(analysis_results)
-    entries_with_zero_files = len([entry for entry in analysis_results if len(entry['bla_project_files']) == 0])
+    entries_with_zero_files = len([entry for entry in analysis_results if len(entry['system_code_files']) == 0])
     entries_with_files = total_entries - entries_with_zero_files
-    total_files_found = sum(len(entry['bla_project_files']) for entry in analysis_results)
+    total_files_found = sum(len(entry['system_code_files']) for entry in analysis_results)
     
     language_stats = {}
     for entry in analysis_results:
@@ -40,8 +40,8 @@ def main():
         if lang not in language_stats:
             language_stats[lang] = {'total': 0, 'with_files': 0, 'zero_files': 0, 'files_count': 0}
         language_stats[lang]['total'] += 1
-        language_stats[lang]['files_count'] += len(entry['bla_project_files'])
-        if len(entry['bla_project_files']) == 0:
+        language_stats[lang]['files_count'] += len(entry['system_code_files'])
+        if len(entry['system_code_files']) == 0:
             language_stats[lang]['zero_files'] += 1
         else:
             language_stats[lang]['with_files'] += 1
