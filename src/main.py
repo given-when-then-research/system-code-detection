@@ -21,7 +21,7 @@ def main():
     results = analyzer.analyze_dataset(dataset)
     
     # Salva os resultados
-    output_path = "./output/GivenWhenThen_dataset.json"
+    output_path = "./output/GivenWhenThen.json"
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     

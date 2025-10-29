@@ -86,8 +86,8 @@ class StaticCodeAnalyzer:
                 'language': language,
                 'normalized_repo_path': str(repo_path),
                 'feature_file': feature_file,
-                'step_definitions_file': str(test_file),
                 'feature_content': feature_content,
+                'step_definitions_file': str(test_file),
                 'step_definitions_content': matched_content,
                 'system_code_files': used_files_records
             }
