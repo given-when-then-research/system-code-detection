@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Set
 
 class StaticCodeAnalyzer:
     def __init__(self, base_path: str):
@@ -16,6 +16,37 @@ class StaticCodeAnalyzer:
             'ruby': self._analyze_ruby,
             'scala': self._analyze_scala
         }
+        
+        # Arquivos de configuração e não-implementação para Node.js
+        self.nodejs_config_files = {
+            'package.json', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml',
+            'tsconfig.json', 'tsconfig.build.json', 'tsconfig.app.json',
+            'jsconfig.json', 'webpack.config.js', 'webpack.config.ts',
+            'vite.config.js', 'vite.config.ts', 'rollup.config.js',
+            'babel.config.js', 'babel.config.json', '.babelrc', '.babelrc.js',
+            'jest.config.js', 'jest.config.ts', 'vitest.config.js', 'vitest.config.ts',
+            '.eslintrc', '.eslintrc.js', '.eslintrc.json', '.eslintrc.yml',
+            'eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs',
+            '.prettierrc', '.prettierrc.js', '.prettierrc.json', 'prettier.config.js',
+            '.editorconfig', '.npmrc', '.yarnrc', '.nvmrc',
+            'nodemon.json', 'next.config.js', 'next.config.mjs',
+            'tailwind.config.js', 'tailwind.config.ts', 'postcss.config.js',
+            'commitlint.config.js', 'lint-staged.config.js',
+            '.huskyrc', '.lintstagedrc', '.stylelintrc'
+        }
+        
+        # Padrões de nome de arquivo para ignorar
+        self.nodejs_ignore_patterns = {
+            r'.*\.config\.(js|ts|mjs|cjs|json)$',
+            r'.*\.setup\.(js|ts)$',
+            r'.*\.test\.(js|ts|jsx|tsx)$',
+            r'.*\.spec\.(js|ts|jsx|tsx)$',
+            r'.*\.d\.ts$',  # TypeScript declaration files
+            r'.*\.stories\.(js|ts|jsx|tsx)$',  # Storybook
+            r'.*\.mock\.(js|ts)$',
+            r'.*\.fixture\.(js|ts)$',
+            r'.*\.e2e\.(js|ts)$',
+        }
     
     def _normalize_name(self, name: str) -> str:
         """Normaliza nome removendo caracteres especiais"""
@@ -30,18 +61,13 @@ class StaticCodeAnalyzer:
             language = entry['language']
             feature_file = entry['feature_file']
             test_file = entry['used_in'][0]['file']
-            # novos campos solicitados
             feature_content = entry.get('feature_content', '')
             matched_content = entry.get('matched_content', '')
 
-            # Normaliza o nome do repositório
-            author_repo = repository.replace("/", "_")  # "autor_repo"
+            author_repo = repository.replace("/", "_")
             normalized_repo_name = self._normalize_name(author_repo)
-            
-            # Caminho completo do repositório
             repo_path = self.base_path / language / normalized_repo_name
             
-            # Caso o repo não exista
             if not repo_path.exists():
                 print(f"Repositório não encontrado: {repo_path}")
                 result = {
@@ -57,7 +83,6 @@ class StaticCodeAnalyzer:
                 results.append(result)
                 continue
             
-            # Caminho completo do arquivo de teste
             test_file_path = repo_path / test_file
             
             if not test_file_path.exists():
@@ -75,10 +100,7 @@ class StaticCodeAnalyzer:
                 results.append(result)
                 continue
             
-            # Analisa o arquivo de teste -> retorna caminhos de arquivos usados
             used_paths = self._analyze_test_file(test_file_path, language, repo_path)
-
-            # Converte paths em {name, path, content}
             used_files_records = self._build_file_records(used_paths)
 
             result = {
@@ -103,7 +125,6 @@ class StaticCodeAnalyzer:
             try:
                 path_obj = Path(p)
                 name = path_obj.name
-                # Leitura robusta – ignora erros de decoding
                 with open(path_obj, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
                 records.append({
@@ -112,7 +133,6 @@ class StaticCodeAnalyzer:
                     'content': content
                 })
             except Exception as e:
-                # Se falhar leitura, ainda retornamos name e path
                 records.append({
                     'name': Path(p).name,
                     'path': p,
@@ -128,6 +148,133 @@ class StaticCodeAnalyzer:
             print(f"Linguagem não suportada: {language}")
             return []
     
+    def _is_nodejs_config_file(self, file_path: Path) -> bool:
+        """Verifica se um arquivo é de configuração do Node.js"""
+        filename = file_path.name
+        
+        # Verifica lista de arquivos de configuração conhecidos
+        if filename in self.nodejs_config_files:
+            return True
+        
+        # Verifica padrões regex
+        for pattern in self.nodejs_ignore_patterns:
+            if re.match(pattern, filename, re.IGNORECASE):
+                return True
+        
+        return False
+    
+    def _is_nodejs_implementation_file(self, file_path: Path) -> bool:
+        """Verifica se um arquivo é de implementação válida para Node.js"""
+        # Extensões válidas de implementação
+        valid_extensions = {'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'}
+        
+        if file_path.suffix not in valid_extensions:
+            return False
+        
+        # Ignora arquivos de configuração
+        if self._is_nodejs_config_file(file_path):
+            return False
+        
+        # Verifica se está em diretórios de teste
+        test_dirs = {'__tests__', '__mocks__', 'tests', 'test', 'specs', 'e2e'}
+        if any(part in test_dirs for part in file_path.parts):
+            return False
+        
+        return True
+    
+    def _resolve_nodejs_import(self, import_path: Path, repo_path: Path) -> List[str]:
+        """
+        Resolve um import de Node.js/TypeScript para arquivo(s) concreto(s).
+        Retorna uma lista de caminhos de arquivos encontrados.
+        """
+        found_files = []
+        extensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
+        
+        # 1. Tenta o caminho exato (arquivo completo com extensão)
+        if import_path.exists() and import_path.is_file():
+            if self._is_project_file(import_path, repo_path) and self._is_nodejs_implementation_file(import_path):
+                found_files.append(str(import_path))
+                return found_files
+        
+        # 2. Tenta adicionar extensões
+        if not import_path.suffix:
+            for ext in extensions:
+                path_with_ext = import_path.with_suffix(ext)
+                if path_with_ext.exists() and path_with_ext.is_file():
+                    if self._is_project_file(path_with_ext, repo_path) and self._is_nodejs_implementation_file(path_with_ext):
+                        found_files.append(str(path_with_ext))
+                        return found_files
+        
+        # 3. Se o path é um diretório
+        if import_path.exists() and import_path.is_dir():
+            # Procura por index.* no diretório
+            for ext in extensions:
+                index_file = import_path / f'index{ext}'
+                if index_file.exists() and index_file.is_file():
+                    if self._is_project_file(index_file, repo_path) and self._is_nodejs_implementation_file(index_file):
+                        found_files.append(str(index_file))
+            
+            # Se não encontrou index, retorna arquivos relevantes do diretório
+            if not found_files:
+                for ext in extensions:
+                    for file in import_path.glob(f'*{ext}'):
+                        if file.is_file() and self._is_project_file(file, repo_path) and self._is_nodejs_implementation_file(file):
+                            found_files.append(str(file))
+        
+        # 4. Tenta como diretório (mesmo se não existir ainda)
+        if not found_files:
+            for ext in extensions:
+                index_file = import_path / f'index{ext}'
+                if index_file.exists() and index_file.is_file():
+                    if self._is_project_file(index_file, repo_path) and self._is_nodejs_implementation_file(index_file):
+                        found_files.append(str(index_file))
+        
+        return found_files
+    
+    def _analyze_nodejs(self, test_file_path: Path, repo_path: Path) -> List[str]:
+        """Analisa arquivo Node.js/TypeScript com heurística melhorada"""
+        used_files = set()
+        
+        try:
+            with open(test_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # Padrões para capturar imports/requires
+            require_pattern = r'require\s*\(\s*["\']([^"\']+)["\']\s*\)'
+            import_pattern = r'import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)\s+from\s+)?["\']([^"\']+)["\']'
+            dynamic_import_pattern = r'import\s*\(\s*["\']([^"\']+)["\']\s*\)'
+            
+            requires = re.findall(require_pattern, content)
+            imports = re.findall(import_pattern, content)
+            dynamic_imports = re.findall(dynamic_import_pattern, content)
+            
+            all_imports = requires + imports + dynamic_imports
+            base_dir = test_file_path.parent
+            
+            for import_path in all_imports:
+                # Ignora imports de módulos externos
+                if not import_path.startswith('.') and not import_path.startswith('/'):
+                    # Verifica aliases de path
+                    if import_path.startswith('@/') or import_path.startswith('~/'):
+                        clean_path = import_path.lstrip('@/').lstrip('~/')
+                        potential_path = repo_path / clean_path
+                    else:
+                        continue
+                else:
+                    try:
+                        potential_path = (base_dir / import_path).resolve()
+                        potential_path.relative_to(repo_path)
+                    except (ValueError, OSError):
+                        continue
+                
+                found_files = self._resolve_nodejs_import(potential_path, repo_path)
+                used_files.update(found_files)
+                
+        except Exception as e:
+            print(f"Erro ao analisar arquivo Node.js {test_file_path}: {e}")
+        
+        return sorted(list(used_files))
+    
     def _analyze_java(self, test_file_path: Path, repo_path: Path) -> List[str]:
         """Analisa arquivo Java"""
         used_files = set()
@@ -135,19 +282,13 @@ class StaticCodeAnalyzer:
             with open(test_file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
-            # Extrai imports
             import_pattern = r'import\s+([a-zA-Z_][a-zA-Z0-9_.]*);'
             imports = re.findall(import_pattern, content)
-            
-            # Extrai classes instanciadas (new ClassName())
             new_pattern = r'new\s+([A-Z][a-zA-Z0-9_]*)\s*\('
             new_classes = re.findall(new_pattern, content)
-            
-            # Extrai chamadas de métodos estáticos (ClassName.method())
             static_pattern = r'([A-Z][a-zA-Z0-9_]*)\.[a-zA-Z_][a-zA-Z0-9_]*\s*\('
             static_classes = re.findall(static_pattern, content)
             
-            # Procura pelos arquivos correspondentes no projeto
             all_references = set(imports + new_classes + static_classes)
             for ref in all_references:
                 class_name = ref.split('.')[-1]
@@ -184,7 +325,6 @@ class StaticCodeAnalyzer:
         try:
             with open(test_file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-            # Heurística: qualquer .go do projeto que contenha identificadores do teste
             for go_file in repo_path.rglob("*.go"):
                 if self._is_project_file(go_file, repo_path):
                     if self._file_contains_references(go_file, content):
@@ -230,62 +370,6 @@ class StaticCodeAnalyzer:
                     used_files.add(str(lua_path))
         except Exception as e:
             print(f"Erro ao analisar arquivo Lua {test_file_path}: {e}")
-        return sorted(list(used_files))
-    
-    def _analyze_nodejs(self, test_file_path: Path, repo_path: Path) -> List[str]:
-        """Analisa arquivo Node.js/TypeScript"""
-        used_files = set()
-        try:
-            with open(test_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            require_pattern = r'require\s*\(\s*["\']([^"\']+)["\']\s*\)'
-            import_pattern = r'import\s+.*from\s+["\']([^"\']+)["\']'
-            requires = re.findall(require_pattern, content)
-            imports = re.findall(import_pattern, content)
-            for req in requires + imports:
-                # Se o caminho for relativo (começa com .), resolve a partir do diretório do arquivo de teste
-                if req.startswith('.'):
-                    # Remove a extensão do arquivo de teste para obter o diretório
-                    base_dir = test_file_path.parent
-                    # Tenta resolver o caminho
-                    potential_path = base_dir / req
-                # Se o caminho for absoluto ou de módulo (não começa com .), a lógica de busca é mais complexa.
-                # Para simplificar, vamos assumir que se não for relativo, é um módulo e ignorar por enquanto,
-                # ou tentar encontrar o arquivo diretamente no repo_path se for um caminho absoluto.
-                # Como o exemplo do usuário é relativo, vamos focar nisso.
-                else:
-                    # Para imports não relativos, vamos tentar buscar no repo_path, assumindo que
-                    # são caminhos absolutos dentro do projeto (ex: @/components/X) ou módulos (que serão ignorados).
-                    # A heurística de busca é complexa, mas para caminhos absolutos do projeto,
-                    # podemos tentar resolver a partir da raiz do repositório.
-                    potential_path = repo_path / req
-                    # Para imports de módulos (ex: 'react'), a heurística atual não vai funcionar bem,
-                    # mas o objetivo é encontrar arquivos do projeto. Vamos focar em arquivos com extensão.
-                    
-                # Lista de extensões comuns em Node.js/TS
-                extensions = ['.js', '.jsx', '.ts', '.tsx', '.json']
-
-                # 1. Tenta o caminho exato
-                if potential_path.exists() and self._is_project_file(potential_path, repo_path):
-                    used_files.add(str(potential_path))
-                    continue
-
-                # 2. Tenta adicionar extensões
-                for ext in extensions:
-                    path_with_ext = potential_path.with_suffix(ext)
-                    if path_with_ext.exists() and self._is_project_file(path_with_ext, repo_path):
-                        used_files.add(str(path_with_ext))
-                        break # Encontrou, passa para o próximo require/import
-
-                # 3. Tenta como diretório (index.js/index.ts)
-                path_as_dir = potential_path / 'index'
-                for ext in extensions:
-                    path_with_index_ext = path_as_dir.with_suffix(ext)
-                    if path_with_index_ext.exists() and self._is_project_file(path_with_index_ext, repo_path):
-                        used_files.add(str(path_with_index_ext))
-                        break # Encontrou, passa para o próximo require/import
-        except Exception as e:
-            print(f"Erro ao analisar arquivo Node.js {test_file_path}: {e}")
         return sorted(list(used_files))
     
     def _analyze_ocaml(self, test_file_path: Path, repo_path: Path) -> List[str]:
@@ -364,7 +448,8 @@ class StaticCodeAnalyzer:
             exclude_dirs = {
                 'node_modules', 'vendor', 'target', 'build', 'dist',
                 '.gradle', '.maven', 'lib', 'libs', 'dependencies',
-                'third_party', 'external', '.git'
+                'third_party', 'external', '.git', 'coverage',
+                '.next', '.nuxt', 'out', '.cache'
             }
             for part in file_path.parts:
                 if part in exclude_dirs:
