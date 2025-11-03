@@ -182,6 +182,104 @@ class StaticCodeAnalyzer:
         
         return True
     
+    def _is_reexport_only_file(self, file_path: Path) -> bool:
+        """
+        Verifica se um arquivo é apenas um re-exportador (index.ts/js comum).
+        Retorna True se o arquivo contém apenas exports de outros módulos.
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # Remove comentários e espaços em branco
+            content_no_comments = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
+            content_no_comments = re.sub(r'/\*.*?\*/', '', content_no_comments, flags=re.DOTALL)
+            content_clean = content_no_comments.strip()
+            
+            if not content_clean:
+                return False
+            
+            # Padrões que indicam apenas re-exports
+            reexport_patterns = [
+                r'^\s*export\s+\*\s+from\s+["\']',  # export * from '...'
+                r'^\s*export\s+\{[^}]*\}\s+from\s+["\']',  # export { ... } from '...'
+            ]
+            
+            lines = content_clean.split('\n')
+            non_empty_lines = [line.strip() for line in lines if line.strip()]
+            
+            # Verifica se todas as linhas não vazias são re-exports
+            if not non_empty_lines:
+                return False
+            
+            for line in non_empty_lines:
+                is_reexport = any(re.match(pattern, line) for pattern in reexport_patterns)
+                if not is_reexport:
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"Erro ao verificar se arquivo é re-export: {file_path}: {e}")
+            return False
+    
+    def _extract_reexports_from_file(self, file_path: Path, repo_path: Path) -> List[str]:
+        """
+        Extrai todos os arquivos que estão sendo re-exportados de um arquivo index.
+        Retorna lista de caminhos dos arquivos reais.
+        """
+        reexported_files = []
+        
+        try:
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # Padrões para capturar exports
+            export_star_pattern = r'export\s+\*\s+from\s+["\']([^"\']+)["\']'
+            export_named_pattern = r'export\s+\{[^}]*\}\s+from\s+["\']([^"\']+)["\']'
+            
+            exports_star = re.findall(export_star_pattern, content)
+            exports_named = re.findall(export_named_pattern, content)
+            
+            all_exports = exports_star + exports_named
+            base_dir = file_path.parent
+            
+            for export_path in all_exports:
+                # Resolve o caminho relativo
+                if export_path.startswith('.'):
+                    try:
+                        potential_path = (base_dir / export_path).resolve()
+                        potential_path.relative_to(repo_path)
+                    except (ValueError, OSError):
+                        continue
+                else:
+                    # Aliases de path
+                    if export_path.startswith('@/') or export_path.startswith('~/'):
+                        clean_path = export_path.lstrip('@/').lstrip('~/')
+                        potential_path = repo_path / clean_path
+                    else:
+                        continue
+                
+                # Resolve o import para arquivo(s) concreto(s)
+                found_files = self._resolve_nodejs_import(potential_path, repo_path)
+                
+                # Para cada arquivo encontrado, verifica se é outro re-exportador
+                for found_file in found_files:
+                    found_file_path = Path(found_file)
+                    
+                    # Se for outro re-exportador, expande recursivamente
+                    if self._is_reexport_only_file(found_file_path):
+                        nested_exports = self._extract_reexports_from_file(found_file_path, repo_path)
+                        reexported_files.extend(nested_exports)
+                    else:
+                        # É um arquivo real de implementação
+                        reexported_files.append(found_file)
+                        
+        except Exception as e:
+            print(f"Erro ao extrair re-exports de {file_path}: {e}")
+        
+        return reexported_files
+    
     def _resolve_nodejs_import(self, import_path: Path, repo_path: Path) -> List[str]:
         """
         Resolve um import de Node.js/TypeScript para arquivo(s) concreto(s).
@@ -268,7 +366,19 @@ class StaticCodeAnalyzer:
                         continue
                 
                 found_files = self._resolve_nodejs_import(potential_path, repo_path)
-                used_files.update(found_files)
+                
+                # Para cada arquivo encontrado, verifica se é um re-exportador
+                for found_file in found_files:
+                    found_file_path = Path(found_file)
+                    
+                    # Se for um arquivo index.ts/js que apenas re-exporta, expande
+                    if found_file_path.name.startswith('index.') and self._is_reexport_only_file(found_file_path):
+                        # Extrai os arquivos reais que estão sendo exportados
+                        real_files = self._extract_reexports_from_file(found_file_path, repo_path)
+                        used_files.update(real_files)
+                    else:
+                        # É um arquivo de implementação real
+                        used_files.add(found_file)
                 
         except Exception as e:
             print(f"Erro ao analisar arquivo Node.js {test_file_path}: {e}")
