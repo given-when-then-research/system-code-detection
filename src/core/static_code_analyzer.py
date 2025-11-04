@@ -118,15 +118,45 @@ class StaticCodeAnalyzer:
         
         return results
     
+    def _normalize_content_for_comparison(self, content: str) -> str:
+        """
+        Normaliza o conteúdo de um arquivo para comparação.
+        Remove diferenças irrelevantes de formatação.
+        """
+        # Remove múltiplas linhas vazias consecutivas
+        normalized = re.sub(r'\n\s*\n', '\n', content)
+        # Remove espaços no final de cada linha
+        normalized = '\n'.join(line.rstrip() for line in normalized.split('\n'))
+        # Remove espaços em branco no início e fim do arquivo
+        normalized = normalized.strip()
+        return normalized
+    
     def _build_file_records(self, paths: List[str]) -> List[Dict]:
         """Dado uma lista de caminhos, retorna objetos com name, path e content."""
         records = []
+        seen_files = {}  # {(name, normalized_content): path}
+        
         for p in sorted(set(paths)):
             try:
                 path_obj = Path(p)
                 name = path_obj.name
                 with open(path_obj, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
+                
+                # Normaliza o conteúdo para comparação
+                normalized_content = self._normalize_content_for_comparison(content)
+                
+                # Cria uma chave única baseada em nome + conteúdo normalizado
+                file_key = (name, normalized_content)
+                
+                # Se já existe um arquivo com mesmo nome e conteúdo, pula
+                if file_key in seen_files:
+                    continue
+                
+                # Marca como visto
+                seen_files[file_key] = str(path_obj)
+                
+                # Adiciona o arquivo com o conteúdo ORIGINAL (não normalizado)
                 records.append({
                     'name': name,
                     'path': str(path_obj),
