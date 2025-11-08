@@ -1,15 +1,46 @@
+import argparse
 import json
 from pathlib import Path
 
 from core.static_code_analyzer import StaticCodeAnalyzer
 
-def main():
-    BASE_PATH = Path("/home/luciano/Documentos/Github/llm-bdd-research/repositories")
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Static Code Analyzer — Process a consolidated dataset and analyze repositories."
+    )
 
-    dataset_path = '../dataset/consolidated_dataset.json'
+    parser.add_argument(
+        "--base",
+        type=Path,
+        required=True,
+        help="Path to the root folder containing cloned repositories."
+    )
+
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        required=True,
+        help="Path to the consolidated_dataset.json file."
+    )
+
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+
+    BASE_PATH = args.base
+    DATASET_PATH = args.dataset
+
+    # --- Validations ---------------------------------------------------------
+    if not BASE_PATH.exists():
+        raise FileNotFoundError(f"[ERROR] Base path not found: {BASE_PATH}")
+
+    if not DATASET_PATH.exists():
+        raise FileNotFoundError(f"[ERROR] Dataset file not found: {DATASET_PATH}")
+
     
     try:
-        with open(dataset_path, 'r', encoding='utf-8') as f:
+        with open(DATASET_PATH, 'r', encoding='utf-8') as f:
             dataset = json.load(f)
     except Exception as e:
         print(f"Erro ao carregar dataset: {e}")

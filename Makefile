@@ -1,2 +1,14 @@
+PYTHON       := python3
+SCRIPT       := src/main.py
+REPOSITORIES_BASE_PATH    := /home/luciano/Documentos/Github/llm-bdd-research/repositories
+DATASET_PATH := ../dataset/consolidated_dataset.json
+
+.PHONY: run
 run:
-	python3 -B src/main.py
+	$(PYTHON) -B $(SCRIPT) --base $(REPOSITORIES_BASE_PATH) --dataset $(DATASET_PATH)
+
+
+.PHONY: clean
+clean:
+	rm -rf __pycache__ logs
+	echo "🧹 Cleaned temporary files!"
