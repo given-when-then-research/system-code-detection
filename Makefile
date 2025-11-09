@@ -1,6 +1,6 @@
 PYTHON       := python3
 SCRIPT       := src/main.py
-REPOSITORIES_BASE_PATH    := /home/luciano/Documentos/Github/llm-bdd-research/repositories
+REPOSITORIES_BASE_PATH    := /home/luciano/Documentos/Github/given-when-then-research/repositories
 DATASET_PATH := ../dataset/consolidated_dataset.json
 
 .PHONY: run
